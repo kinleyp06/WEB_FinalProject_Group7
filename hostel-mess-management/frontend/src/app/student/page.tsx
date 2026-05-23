@@ -1,16 +1,44 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import toast from 'react-hot-toast';
+import toast, { Toaster } from 'react-hot-toast';
 import useAuthStore from '@/store/authStore';
 import useWebSocket from '@/hooks/useWebSocket';
-import Navbar from '@/components/Navbar';
 import api from '@/lib/api';
 
 const STARS = [1, 2, 3, 4, 5];
 
+// ── shared inline-style tokens (mirrors admin page) ──────────────────────────
+const C = {
+  bg:        '#0f1a0f',
+  panel:     '#1a2e1a',
+  panelAlt:  '#152215',
+  border:    '#2d5a2d',
+  text:      '#e8f5e9',
+  textMuted: '#558b57',
+  accent:    '#a5d6a7',
+  accentMid: '#81c784',
+  accentDim: '#66bb6a',
+  danger:    '#ef5350',
+  warn:      '#f59e0b',
+  input:     '#0f1a0f',
+};
+
+const inputStyle: React.CSSProperties = {
+  width: '100%', background: C.input, border: `1px solid ${C.border}`,
+  borderRadius: '6px', padding: '0.6rem 0.9rem', color: C.text,
+  fontSize: '0.9rem', fontFamily: 'inherit', boxSizing: 'border-box',
+  outline: 'none',
+};
+
+const btnPrimary: React.CSSProperties = {
+  background: C.panelAlt, border: `1px solid ${C.accentDim}`, color: C.accentDim,
+  padding: '0.5rem 1.4rem', borderRadius: '4px', cursor: 'pointer',
+  fontSize: '0.9rem', fontFamily: 'inherit',
+};
+
 export default function StudentDashboard() {
-  const { user } = useAuthStore();
+  const { user, logout } = useAuthStore();
   const router = useRouter();
   useWebSocket();
 
@@ -34,10 +62,8 @@ export default function StudentDashboard() {
         api.get('/meals'), api.get('/announcements'),
         api.get('/feedback'), api.get('/suggestions'),
       ]);
-      setMeals(m.data);
-      setAnnouncements(a.data);
-      setFeedbacks(f.data);
-      setSuggestions(s.data);
+      setMeals(m.data); setAnnouncements(a.data);
+      setFeedbacks(f.data); setSuggestions(s.data);
     } catch { toast.error('Failed to load data'); }
   };
 
@@ -61,165 +87,231 @@ export default function StudentDashboard() {
     try {
       await api.post('/suggestions', { content: suggestionText });
       toast.success('Suggestion submitted!');
-      setSuggestionText('');
-      fetchAll();
+      setSuggestionText(''); fetchAll();
     } catch (err: any) { toast.error(err.response?.data?.error || 'Error'); }
     finally { setLoading(false); }
   };
 
-  const TABS = ['meals', 'feedback', 'suggestions', 'history', 'polls'];
+  const handleLogout = () => { logout(); toast.success('Logged out'); router.push('/'); };
+
+  const TABS = [
+    { key: 'meals',       icon: '🍛', label: 'Meal Plan' },
+    { key: 'feedback',    icon: '⭐', label: 'Give Feedback' },
+    { key: 'suggestions', icon: '💡', label: 'Suggestions' },
+    { key: 'history',     icon: '📋', label: 'My History' },
+    { key: 'polls',       icon: '🗳️', label: 'Special Polls' },
+  ];
+
+  const statusColor: Record<string, string> = {
+    IMPLEMENTED: C.accentDim, REVIEWED: '#3b82f6', FLAGGED: C.danger, PENDING: C.warn,
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Navbar />
-      <div className="max-w-5xl mx-auto px-4 py-8">
-        {announcements.length > 0 && (
-          <div className="mb-6 space-y-2">
-            {announcements.slice(0, 2).map((a) => (
-              <div key={a.id} className="bg-yellow-50 border-l-4 border-yellow-400 px-4 py-3 rounded-r-lg">
-                <span className="font-semibold text-yellow-800">📢 {a.title}:</span>
-                <span className="text-yellow-700 ml-2 text-sm">{a.content}</span>
-              </div>
-            ))}
-          </div>
-        )}
+    <div style={{ minHeight: '100vh', background: C.bg, color: C.text, fontFamily: "'Georgia', serif" }}>
+      <Toaster position="top-right" />
 
-        <div className="flex gap-2 mb-6 flex-wrap">
-          {TABS.map((t) => (
-            <button key={t} onClick={() => setTab(t)}
-              className={`px-5 py-2 rounded-lg font-medium text-sm capitalize transition-all ${tab === t ? 'bg-green-700 text-white shadow' : 'bg-white text-gray-600 border hover:border-green-400'}`}>
-              {t === 'meals' ? '🍛 Meal Plan'
-                : t === 'feedback' ? '⭐ Give Feedback'
-                : t === 'suggestions' ? '💡 Suggestions'
-                : t === 'history' ? '📋 My History'
-                : '🗳️ Special Polls'}
-            </button>
-          ))}
+      {/* Header */}
+      <header style={{
+        background: C.panel, borderBottom: `2px solid ${C.border}`,
+        padding: '0 2rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '60px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <span style={{ fontSize: '1.5rem' }}>🍽️</span>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '1.05rem', color: C.accent, letterSpacing: '0.03em' }}>
+              Mess Management
+            </div>
+            <div style={{ fontSize: '0.7rem', color: C.accentDim, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+              CST — Royal University of Bhutan
+            </div>
+          </div>
         </div>
+        <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
+          <span style={{ fontSize: '0.85rem', color: C.accentMid }}>
+            👤 {user?.name} <span style={{ color: C.textMuted, fontSize: '0.75rem' }}>(Student)</span>
+          </span>
+          <button onClick={handleLogout} style={{
+            background: 'transparent', border: `1px solid ${C.danger}`, color: C.danger,
+            padding: '0.3rem 1rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem', fontFamily: 'inherit',
+          }}>Logout</button>
+        </div>
+      </header>
 
-        {tab === 'meals' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {meals.length === 0 && <p className="text-gray-400 col-span-3 text-center py-12">No meal plans yet.</p>}
-            {meals.map((meal) => (
-              <div key={meal.id} className="bg-white rounded-xl shadow-sm border p-5 hover:shadow-md transition-shadow">
-                <h3 className="font-bold text-green-800 text-lg mb-3">{meal.day}</h3>
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-start gap-2"><span className="text-lg">🌅</span><div><span className="font-medium">Breakfast</span><p className="text-gray-600">{meal.breakfast}</p></div></div>
-                  <div className="flex items-start gap-2"><span className="text-lg">☀️</span><div><span className="font-medium">Lunch</span><p className="text-gray-600">{meal.lunch}</p></div></div>
-                  <div className="flex items-start gap-2"><span className="text-lg">🌙</span><div><span className="font-medium">Dinner</span><p className="text-gray-600">{meal.dinner}</p></div></div>
-                </div>
+      {/* Nav tabs */}
+      <nav style={{
+        background: C.panelAlt, borderBottom: `1px solid ${C.border}`,
+        display: 'flex', padding: '0 2rem', overflowX: 'auto',
+      }}>
+        {TABS.map(({ key, icon, label }) => (
+          <button key={key} onClick={() => setTab(key)} style={{
+            background: 'transparent', border: 'none',
+            borderBottom: tab === key ? `3px solid ${C.accentDim}` : '3px solid transparent',
+            color: tab === key ? C.accent : C.textMuted,
+            padding: '1rem 1.5rem', cursor: 'pointer', fontSize: '0.9rem',
+            fontFamily: 'inherit', whiteSpace: 'nowrap', transition: 'color 0.2s',
+          }}>
+            {icon} {label}
+          </button>
+        ))}
+      </nav>
+
+      <main style={{ padding: '2rem', maxWidth: '1000px', margin: '0 auto' }}>
+
+        {/* Announcements banner */}
+        {announcements.length > 0 && (
+          <div style={{ marginBottom: '1.5rem' }}>
+            {announcements.slice(0, 2).map((a) => (
+              <div key={a.id} style={{
+                background: '#2a1f0a', border: `1px solid ${C.warn}`,
+                borderLeft: `4px solid ${C.warn}`, borderRadius: '6px',
+                padding: '0.75rem 1rem', marginBottom: '0.5rem',
+              }}>
+                <span style={{ fontWeight: 700, color: C.warn }}>📢 {a.title}: </span>
+                <span style={{ color: '#d4b483', fontSize: '0.9rem' }}>{a.content}</span>
               </div>
             ))}
           </div>
         )}
 
-        {tab === 'feedback' && (
-          <div className="bg-white rounded-xl shadow-sm border p-6 max-w-lg">
-            <h2 className="font-bold text-lg mb-4 text-gray-800">Rate a Meal</h2>
-            <form onSubmit={submitFeedback} className="space-y-4">
-              <select value={feedbackForm.mealPlanId} onChange={(e) => setFeedbackForm({ ...feedbackForm, mealPlanId: e.target.value })}
-                className="w-full border rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-500">
-                <option value="">Select a meal day</option>
-                {meals.map((m) => <option key={m.id} value={m.id}>{m.day}</option>)}
-              </select>
-              <select value={feedbackForm.mealType} onChange={(e) => setFeedbackForm({ ...feedbackForm, mealType: e.target.value })}
-                className="w-full border rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-500">
-                <option value="breakfast">Breakfast</option>
-                <option value="lunch">Lunch</option>
-                <option value="dinner">Dinner</option>
-              </select>
-              <div>
-                <p className="text-sm text-gray-600 mb-2">Rating</p>
-                <div className="flex gap-2">
-                  {STARS.map((s) => (
-                    <button type="button" key={s} onClick={() => setFeedbackForm({ ...feedbackForm, rating: s })}
-                      className={`text-2xl transition-transform hover:scale-110 ${feedbackForm.rating >= s ? 'text-yellow-400' : 'text-gray-300'}`}>★</button>
-                  ))}
-                </div>
+        {/* ── Meals tab ── */}
+        {tab === 'meals' && (
+          <div>
+            <h2 style={{ color: C.accent, marginBottom: '1.5rem', fontSize: '1.3rem' }}>🍛 Weekly Meal Plan</h2>
+            {meals.length === 0 && (
+              <div style={{ textAlign: 'center', color: C.textMuted, padding: '3rem', background: C.panel, borderRadius: '8px', border: `1px dashed ${C.border}` }}>
+                No meal plans available yet.
               </div>
-              <textarea value={feedbackForm.comment} onChange={(e) => setFeedbackForm({ ...feedbackForm, comment: e.target.value })}
-                placeholder="Comments (optional)" rows={3}
-                className="w-full border rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none" />
-              <button type="submit" disabled={loading}
-                className="w-full bg-green-700 text-white py-3 rounded-lg font-semibold hover:bg-green-800 transition-colors disabled:opacity-50">
-                {loading ? 'Submitting...' : 'Submit Feedback'}
-              </button>
-            </form>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1rem' }}>
+              {meals.map((meal) => (
+                <div key={meal.id} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '1.25rem' }}>
+                  <div style={{ fontWeight: 700, color: C.accent, fontSize: '1.05rem', marginBottom: '0.75rem' }}>{meal.day}</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', fontSize: '0.88rem' }}>
+                    <div><span style={{ color: C.textMuted }}>🌅 Breakfast: </span><span style={{ color: C.text }}>{meal.breakfast}</span></div>
+                    <div><span style={{ color: C.textMuted }}>☀️ Lunch: </span><span style={{ color: C.text }}>{meal.lunch}</span></div>
+                    <div><span style={{ color: C.textMuted }}>🌙 Dinner: </span><span style={{ color: C.text }}>{meal.dinner}</span></div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
+        {/* ── Feedback tab ── */}
+        {tab === 'feedback' && (
+          <div style={{ maxWidth: '500px' }}>
+            <h2 style={{ color: C.accent, marginBottom: '1.5rem', fontSize: '1.3rem' }}>⭐ Rate a Meal</h2>
+            <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '1.5rem' }}>
+              <form onSubmit={submitFeedback} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div>
+                  <label style={{ display: 'block', color: C.accentMid, marginBottom: '0.3rem', fontSize: '0.85rem' }}>Meal Day</label>
+                  <select value={feedbackForm.mealPlanId} onChange={(e) => setFeedbackForm({ ...feedbackForm, mealPlanId: e.target.value })}
+                    style={{ ...inputStyle }}>
+                    <option value="">Select a meal day</option>
+                    {meals.map((m) => <option key={m.id} value={m.id}>{m.day}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', color: C.accentMid, marginBottom: '0.3rem', fontSize: '0.85rem' }}>Meal Type</label>
+                  <select value={feedbackForm.mealType} onChange={(e) => setFeedbackForm({ ...feedbackForm, mealType: e.target.value })}
+                    style={{ ...inputStyle }}>
+                    <option value="breakfast">Breakfast</option>
+                    <option value="lunch">Lunch</option>
+                    <option value="dinner">Dinner</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', color: C.accentMid, marginBottom: '0.3rem', fontSize: '0.85rem' }}>Rating</label>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    {STARS.map((s) => (
+                      <button type="button" key={s} onClick={() => setFeedbackForm({ ...feedbackForm, rating: s })}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.8rem',
+                          color: feedbackForm.rating >= s ? C.warn : C.border }}>★</button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label style={{ display: 'block', color: C.accentMid, marginBottom: '0.3rem', fontSize: '0.85rem' }}>Comment (optional)</label>
+                  <textarea value={feedbackForm.comment} onChange={(e) => setFeedbackForm({ ...feedbackForm, comment: e.target.value })}
+                    placeholder="Share your thoughts..." rows={3}
+                    style={{ ...inputStyle, resize: 'none' }} />
+                </div>
+                <button type="submit" disabled={loading} style={{ ...btnPrimary, opacity: loading ? 0.5 : 1 }}>
+                  {loading ? 'Submitting...' : 'Submit Feedback'}
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* ── Suggestions tab ── */}
         {tab === 'suggestions' && (
-          <div className="bg-white rounded-xl shadow-sm border p-6 max-w-lg">
-            <h2 className="font-bold text-lg mb-4 text-gray-800">Suggest a Meal</h2>
-            <form onSubmit={submitSuggestion} className="space-y-4">
-              <textarea value={suggestionText} onChange={(e) => setSuggestionText(e.target.value)}
-                placeholder="What would you like to see on the menu?" rows={4}
-                className="w-full border rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none" required />
-              <button type="submit" disabled={loading}
-                className="w-full bg-green-700 text-white py-3 rounded-lg font-semibold hover:bg-green-800 disabled:opacity-50">
-                {loading ? 'Submitting...' : 'Submit Suggestion'}
-              </button>
-            </form>
+          <div style={{ maxWidth: '500px' }}>
+            <h2 style={{ color: C.accent, marginBottom: '1.5rem', fontSize: '1.3rem' }}>💡 Suggest a Meal</h2>
+            <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '1.5rem' }}>
+              <form onSubmit={submitSuggestion} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <textarea value={suggestionText} onChange={(e) => setSuggestionText(e.target.value)}
+                  placeholder="What would you like to see on the menu?" rows={4} required
+                  style={{ ...inputStyle, resize: 'none' }} />
+                <button type="submit" disabled={loading} style={{ ...btnPrimary, opacity: loading ? 0.5 : 1 }}>
+                  {loading ? 'Submitting...' : 'Submit Suggestion'}
+                </button>
+              </form>
+            </div>
           </div>
         )}
 
+        {/* ── History tab ── */}
         {tab === 'history' && (
-          <div className="space-y-6">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
             <div>
-              <h2 className="font-bold text-lg mb-3 text-gray-800">My Feedback History</h2>
-              {feedbacks.length === 0 ? <p className="text-gray-400 text-sm">No feedback submitted yet.</p> : (
-                <div className="space-y-3">
-                  {feedbacks.map((f) => (
-                    <div key={f.id} className="bg-white border rounded-xl p-4 flex justify-between items-start">
-                      <div>
-                        <p className="font-medium text-sm">{f.mealPlan?.day} — {f.mealType}</p>
-                        <p className="text-gray-500 text-sm mt-1">{f.comment || 'No comment'}</p>
-                        <p className="text-xs text-gray-400 mt-1">{new Date(f.createdAt).toLocaleDateString()}</p>
-                      </div>
-                      <span className="text-yellow-500 font-bold">{'★'.repeat(f.rating)}</span>
+              <h2 style={{ color: C.accent, marginBottom: '1rem', fontSize: '1.3rem' }}>📋 My Feedback History</h2>
+              {feedbacks.length === 0
+                ? <p style={{ color: C.textMuted, fontSize: '0.9rem' }}>No feedback submitted yet.</p>
+                : feedbacks.map((f) => (
+                  <div key={f.id} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '1rem', marginBottom: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <p style={{ fontWeight: 600, fontSize: '0.9rem', color: C.accentMid }}>{f.mealPlan?.day} — {f.mealType}</p>
+                      <p style={{ color: C.textMuted, fontSize: '0.85rem', marginTop: '0.25rem' }}>{f.comment || 'No comment'}</p>
+                      <p style={{ color: C.textMuted, fontSize: '0.75rem', marginTop: '0.25rem' }}>{new Date(f.createdAt).toLocaleDateString()}</p>
                     </div>
-                  ))}
-                </div>
-              )}
+                    <span style={{ color: C.warn, fontWeight: 700, fontSize: '1rem' }}>{'★'.repeat(f.rating)}</span>
+                  </div>
+                ))
+              }
             </div>
             <div>
-              <h2 className="font-bold text-lg mb-3 text-gray-800">My Suggestions</h2>
-              {suggestions.length === 0 ? <p className="text-gray-400 text-sm">No suggestions yet.</p> : (
-                <div className="space-y-3">
-                  {suggestions.map((s) => (
-                    <div key={s.id} className="bg-white border rounded-xl p-4">
-                      <p className="text-sm text-gray-700">{s.content}</p>
-                      <p className="text-xs text-gray-400 mt-1">{new Date(s.createdAt).toLocaleDateString()}</p>
-                      <div className="flex justify-between mt-2">
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                          s.status === 'IMPLEMENTED' ? 'bg-green-100 text-green-700'
-                          : s.status === 'REVIEWED' ? 'bg-blue-100 text-blue-700'
-                          : s.status === 'FLAGGED' ? 'bg-red-100 text-red-600'
-                          : 'bg-gray-100 text-gray-600'}`}>
-                          {s.status}
-                        </span>
-                        {s.adminReply && <p className="text-xs text-green-700 italic">Admin: {s.adminReply}</p>}
-                      </div>
+              <h2 style={{ color: C.accent, marginBottom: '1rem', fontSize: '1.3rem' }}>💡 My Suggestions</h2>
+              {suggestions.length === 0
+                ? <p style={{ color: C.textMuted, fontSize: '0.9rem' }}>No suggestions yet.</p>
+                : suggestions.map((s) => (
+                  <div key={s.id} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '1rem', marginBottom: '0.75rem' }}>
+                    <p style={{ fontSize: '0.9rem', color: C.text }}>{s.content}</p>
+                    <p style={{ fontSize: '0.75rem', color: C.textMuted, marginTop: '0.25rem' }}>{new Date(s.createdAt).toLocaleDateString()}</p>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                      <span style={{ fontSize: '0.75rem', padding: '0.15rem 0.6rem', borderRadius: '999px', border: `1px solid ${statusColor[s.status] || C.textMuted}`, color: statusColor[s.status] || C.textMuted }}>
+                        {s.status}
+                      </span>
+                      {s.adminReply && <p style={{ fontSize: '0.8rem', color: C.accentMid, fontStyle: 'italic' }}>Admin: {s.adminReply}</p>}
                     </div>
-                  ))}
-                </div>
-              )}
+                  </div>
+                ))
+              }
             </div>
           </div>
         )}
 
+        {/* ── Polls tab ── */}
         {tab === 'polls' && (
-          <div className="flex flex-col items-center justify-center py-16 gap-4">
-            <p className="text-gray-500 text-lg">View and vote on special meal polls</p>
-            <button
-              onClick={() => router.push('/student/polls')}
-              className="bg-green-700 text-white px-8 py-3 rounded-lg font-semibold hover:bg-green-800">
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '4rem 0', gap: '1.25rem' }}>
+            <p style={{ color: C.textMuted, fontSize: '1rem' }}>View and vote on special meal polls</p>
+            <button onClick={() => router.push('/student/polls')} style={{ ...btnPrimary, padding: '0.65rem 2rem', fontSize: '1rem' }}>
               🗳️ Go to Special Polls
             </button>
           </div>
         )}
 
-      </div>
+      </main>
     </div>
   );
 }
