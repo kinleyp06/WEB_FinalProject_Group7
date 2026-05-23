@@ -1,250 +1,501 @@
-'use client';
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import toast from 'react-hot-toast';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
-import useAuthStore from '@/store/authStore';
-import Navbar from '@/components/Navbar';
-import api from '@/lib/api';
+"use client";
 
-const PIE_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#15803d'];
-const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import axios from "axios";
+import toast, { Toaster } from "react-hot-toast";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend,
+} from "recharts";
+
+const api = axios.create({ baseURL: process.env.NEXT_PUBLIC_API_URL });
+api.interceptors.request.use((config) => {
+  const raw = localStorage.getItem("mess-auth");
+  if (raw) {
+    const { state } = JSON.parse(raw);
+    if (state?.token) config.headers.Authorization = `Bearer ${state.token}`;
+  }
+  return config;
+});
+
+type Tab = "dashboard" | "meals" | "announcements" | "suggestions";
+
+interface MealPlan {
+  id: number;
+  day: string;
+  breakfast: string;
+  lunch: string;
+  dinner: string;
+  weekStart: string;
+}
+
+interface Announcement {
+  id: number;
+  title: string;
+  content: string;
+  createdAt: string;
+}
+
+interface Suggestion {
+  id: number;
+  content: string;
+  status: "PENDING" | "REVIEWED" | "IMPLEMENTED" | "FLAGGED";
+  adminReply: string | null;
+  createdAt: string;
+  user: { name: string; email: string };
+}
+
+interface FeedbackStat {
+  mealType: string;
+  avgRating: number;
+  count: number;
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  PENDING: "#f59e0b",
+  REVIEWED: "#3b82f6",
+  IMPLEMENTED: "#22c55e",
+  FLAGGED: "#ef4444",
+};
+
+const PIE_COLORS = ["#22c55e", "#84cc16", "#f59e0b", "#f97316", "#ef4444"];
 
 export default function AdminDashboard() {
-  const { user } = useAuthStore();
   const router = useRouter();
-  const [tab, setTab] = useState('dashboard');
-  const [meals, setMeals] = useState<any[]>([]);
-  const [stats, setStats] = useState<any>(null);
-  const [suggestions, setSuggestions] = useState<any[]>([]);
-  const [announcements, setAnnouncements] = useState<any[]>([]);
-  const [mealForm, setMealForm] = useState({ day: 'Monday', breakfast: '', lunch: '', dinner: '', weekStart: '' });
-  const [announcementForm, setAnnouncementForm] = useState({ title: '', content: '' });
-  const [replyForm, setReplyForm] = useState<any>({});
+  const [tab, setTab] = useState<Tab>("dashboard");
+
+  // Meals
+  const [meals, setMeals] = useState<MealPlan[]>([]);
+  const [mealForm, setMealForm] = useState({
+    day: "", breakfast: "", lunch: "", dinner: "", weekStart: "",
+  });
+
+  // Announcements
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [annForm, setAnnForm] = useState({ title: "", content: "" });
+
+  // Suggestions
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [replyMap, setReplyMap] = useState<Record<number, string>>({});
+
+  // Analytics
+  const [feedbackStats, setFeedbackStats] = useState<FeedbackStat[]>([]);
+  const [ratingDist, setRatingDist] = useState<{ name: string; value: number }[]>([]);
+
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!user || user.role !== 'ADMIN') { router.push('/'); return; }
+    const raw = localStorage.getItem("mess-auth");
+    if (!raw) return router.push("/");
+    const { state } = JSON.parse(raw);
+    if (state?.user?.role !== "ADMIN") return router.push("/");
     fetchAll();
-  }, [user]);
+  }, []);
 
-  const fetchAll = async () => {
+  async function fetchAll() {
+    await Promise.all([fetchMeals(), fetchAnnouncements(), fetchSuggestions(), fetchFeedback()]);
+  }
+
+  async function fetchMeals() {
     try {
-      const [m, s_data, a, st] = await Promise.all([
-        api.get('/meals'), api.get('/suggestions'),
-        api.get('/announcements'), api.get('/feedback/stats'),
-      ]);
-      setMeals(m.data);
-      setSuggestions(s_data.data);
-      setAnnouncements(a.data);
-      setStats(st.data);
-    } catch { toast.error('Failed to load data'); }
-  };
+      const { data } = await api.get("/api/meals");
+      setMeals(data);
+    } catch { toast.error("Failed to load meals"); }
+  }
 
-  const createMeal = async (e: React.FormEvent) => {
+  async function fetchAnnouncements() {
+    try {
+      const { data } = await api.get("/api/announcements");
+      setAnnouncements(data);
+    } catch { toast.error("Failed to load announcements"); }
+  }
+
+  async function fetchSuggestions() {
+    try {
+      const { data } = await api.get("/api/suggestions");
+      setSuggestions(data);
+    } catch { toast.error("Failed to load suggestions"); }
+  }
+
+  async function fetchFeedback() {
+    try {
+      const { data } = await api.get("/api/feedback");
+      // Aggregate by mealType
+      const grouped: Record<string, { total: number; count: number }> = {};
+      const dist: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+      data.forEach((f: { mealType: string; rating: number }) => {
+        if (!grouped[f.mealType]) grouped[f.mealType] = { total: 0, count: 0 };
+        grouped[f.mealType].total += f.rating;
+        grouped[f.mealType].count += 1;
+        dist[f.rating] = (dist[f.rating] || 0) + 1;
+      });
+      setFeedbackStats(
+        Object.entries(grouped).map(([mealType, v]) => ({
+          mealType,
+          avgRating: parseFloat((v.total / v.count).toFixed(2)),
+          count: v.count,
+        }))
+      );
+      setRatingDist(
+        Object.entries(dist).map(([star, value]) => ({ name: `${star}★`, value }))
+      );
+    } catch { /* silent */ }
+  }
+
+  async function handleCreateMeal(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     try {
-      await api.post('/meals', mealForm);
-      toast.success('Meal plan created!');
-      setMealForm({ day: 'Monday', breakfast: '', lunch: '', dinner: '', weekStart: '' });
-      fetchAll();
-    } catch (err: any) { toast.error(err.response?.data?.error || 'Error'); }
-    finally { setLoading(false); }
-  };
+      await api.post("/api/meals", mealForm);
+      toast.success("Meal plan created!");
+      setMealForm({ day: "", breakfast: "", lunch: "", dinner: "", weekStart: "" });
+      fetchMeals();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || "Failed to create meal";
+      toast.error(msg);
+    } finally { setLoading(false); }
+  }
 
-  const deleteMeal = async (id: number) => {
-    if (!confirm('Delete this meal?')) return;
-    try { await api.delete(`/meals/${id}`); toast.success('Deleted'); fetchAll(); }
-    catch { toast.error('Error'); }
-  };
+  async function handleDeleteMeal(id: number) {
+    if (!confirm("Delete this meal plan?")) return;
+    try {
+      await api.delete(`/api/meals/${id}`);
+      toast.success("Deleted");
+      fetchMeals();
+    } catch { toast.error("Delete failed"); }
+  }
 
-  const createAnnouncement = async (e: React.FormEvent) => {
+  async function handleCreateAnnouncement(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     try {
-      await api.post('/announcements', announcementForm);
-      toast.success('Announcement posted!');
-      setAnnouncementForm({ title: '', content: '' });
-      fetchAll();
-    } catch (err: any) { toast.error(err.response?.data?.error || 'Error'); }
-    finally { setLoading(false); }
-  };
+      await api.post("/api/announcements", annForm);
+      toast.success("Announcement posted!");
+      setAnnForm({ title: "", content: "" });
+      fetchAnnouncements();
+    } catch { toast.error("Failed to post announcement"); } finally { setLoading(false); }
+  }
 
-  const deleteAnnouncement = async (id: number) => {
-    try { await api.delete(`/announcements/${id}`); toast.success('Deleted'); fetchAll(); }
-    catch { toast.error('Error'); }
-  };
-
-  const replyToSuggestion = async (id: number) => {
-    const form = replyForm[id];
-    if (!form?.reply) return toast.error('Enter a reply');
+  async function handleSuggestionUpdate(id: number, status: string) {
     try {
-      await api.patch(`/suggestions/${id}`, { adminReply: form.reply, status: form.status || 'REVIEWED' });
-      toast.success('Reply sent!');
-      setReplyForm({ ...replyForm, [id]: {} });
-      fetchAll();
-    } catch { toast.error('Error'); }
-  };
+      await api.put(`/api/suggestions/${id}`, { status, adminReply: replyMap[id] || undefined });
+      toast.success("Suggestion updated");
+      fetchSuggestions();
+    } catch { toast.error("Update failed"); }
+  }
 
-  const TABS = ['dashboard', 'meals', 'announcements', 'suggestions'];
+  async function handleLogout() {
+    localStorage.removeItem("mess-auth");
+    router.push("/");
+  }
+
+  const TABS: { key: Tab; label: string; icon: string }[] = [
+    { key: "dashboard", label: "Dashboard", icon: "📊" },
+    { key: "meals", label: "Meal Plans", icon: "🍽️" },
+    { key: "announcements", label: "Announcements", icon: "📢" },
+    { key: "suggestions", label: "Suggestions", icon: "💬" },
+  ];
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Navbar />
-      <div className="max-w-6xl mx-auto px-4 py-8">
-        <div className="flex gap-2 mb-6 flex-wrap">
-          {TABS.map((t) => (
-            <button key={t} onClick={() => setTab(t)}
-              className={`px-5 py-2 rounded-lg font-medium text-sm capitalize transition-all ${tab === t ? 'bg-green-700 text-white shadow' : 'bg-white text-gray-600 border hover:border-green-400'}`}>
-              {t === 'dashboard' ? '📊 Dashboard' : t === 'meals' ? '🍛 Meal Plans' : t === 'announcements' ? '📢 Announcements' : '💡 Suggestions'}
-            </button>
-          ))}
+    <div style={{ minHeight: "100vh", background: "#0f1a0f", color: "#e8f5e9", fontFamily: "'Georgia', serif" }}>
+      <Toaster position="top-right" />
+
+      {/* Header */}
+      <header style={{
+        background: "#1a2e1a",
+        borderBottom: "2px solid #2d5a2d",
+        padding: "0 2rem",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        height: "64px",
+        position: "sticky",
+        top: 0,
+        zIndex: 100,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <span style={{ fontSize: "1.5rem" }}>🏫</span>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: "1.05rem", color: "#a5d6a7", letterSpacing: "0.03em" }}>
+              CST Hostel Mess
+            </div>
+            <div style={{ fontSize: "0.7rem", color: "#66bb6a", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+              Admin Control Panel
+            </div>
+          </div>
         </div>
+        <div style={{ display: "flex", gap: "1.5rem", alignItems: "center" }}>
+          <a href="/admin/finance" style={{ color: "#81c784", textDecoration: "none", fontSize: "0.9rem" }}>💰 Finance</a>
+          <a href="/admin/polls" style={{ color: "#81c784", textDecoration: "none", fontSize: "0.9rem" }}>🗳️ Polls</a>
+          <button onClick={handleLogout} style={{
+            background: "transparent", border: "1px solid #ef5350", color: "#ef5350",
+            padding: "0.3rem 1rem", borderRadius: "4px", cursor: "pointer", fontSize: "0.85rem",
+          }}>Logout</button>
+        </div>
+      </header>
 
-        {tab === 'dashboard' && stats && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="bg-white rounded-xl border p-5 text-center shadow-sm">
-                <p className="text-3xl font-bold text-green-700">{stats.totalFeedbacks}</p>
-                <p className="text-gray-500 text-sm mt-1">Total Feedbacks</p>
-              </div>
-              <div className="bg-white rounded-xl border p-5 text-center shadow-sm">
-                <p className="text-3xl font-bold text-yellow-500">{stats.avgRating} ⭐</p>
-                <p className="text-gray-500 text-sm mt-1">Average Rating</p>
-              </div>
-              <div className="bg-white rounded-xl border p-5 text-center shadow-sm">
-                <p className="text-3xl font-bold text-blue-600">{meals.length}</p>
-                <p className="text-gray-500 text-sm mt-1">Meal Plans</p>
-              </div>
+      {/* Tab Nav */}
+      <nav style={{
+        background: "#152215",
+        borderBottom: "1px solid #2d5a2d",
+        display: "flex",
+        padding: "0 2rem",
+      }}>
+        {TABS.map(({ key, label, icon }) => (
+          <button key={key} onClick={() => setTab(key)} style={{
+            background: "transparent",
+            border: "none",
+            borderBottom: tab === key ? "3px solid #66bb6a" : "3px solid transparent",
+            color: tab === key ? "#a5d6a7" : "#558b57",
+            padding: "1rem 1.5rem",
+            cursor: "pointer",
+            fontSize: "0.9rem",
+            fontFamily: "inherit",
+            transition: "color 0.2s",
+          }}>{icon} {label}</button>
+        ))}
+      </nav>
+
+      <main style={{ padding: "2rem", maxWidth: "1100px", margin: "0 auto" }}>
+
+        {/* ── DASHBOARD TAB ── */}
+        {tab === "dashboard" && (
+          <div>
+            <h2 style={{ color: "#a5d6a7", marginBottom: "1.5rem", fontSize: "1.3rem" }}>Analytics Overview</h2>
+
+            {/* Summary cards */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "1rem", marginBottom: "2rem" }}>
+              {[
+                { label: "Total Meal Plans", value: meals.length, icon: "🍽️" },
+                { label: "Announcements", value: announcements.length, icon: "📢" },
+                { label: "Suggestions", value: suggestions.length, icon: "💬" },
+                { label: "Pending Reviews", value: suggestions.filter(s => s.status === "PENDING").length, icon: "⏳" },
+              ].map(({ label, value, icon }) => (
+                <div key={label} style={{
+                  background: "#1a2e1a", border: "1px solid #2d5a2d",
+                  borderRadius: "8px", padding: "1.25rem", textAlign: "center",
+                }}>
+                  <div style={{ fontSize: "1.8rem" }}>{icon}</div>
+                  <div style={{ fontSize: "2rem", fontWeight: 700, color: "#a5d6a7" }}>{value}</div>
+                  <div style={{ fontSize: "0.8rem", color: "#558b57" }}>{label}</div>
+                </div>
+              ))}
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-white rounded-xl border p-5 shadow-sm">
-                <h3 className="font-semibold mb-4 text-gray-700">Avg Rating by Meal Type</h3>
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={stats.mealTypeAvg}>
-                    <XAxis dataKey="type" />
-                    <YAxis domain={[0, 5]} />
-                    <Tooltip />
-                    <Bar dataKey="avg" fill="#15803d" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+
+            {/* Charts */}
+            {feedbackStats.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem" }}>
+                <div style={{ background: "#1a2e1a", border: "1px solid #2d5a2d", borderRadius: "8px", padding: "1.5rem" }}>
+                  <h3 style={{ color: "#81c784", marginBottom: "1rem", fontSize: "1rem" }}>Avg Rating by Meal Type</h3>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={feedbackStats}>
+                      <XAxis dataKey="mealType" stroke="#558b57" />
+                      <YAxis domain={[0, 5]} stroke="#558b57" />
+                      <Tooltip contentStyle={{ background: "#1a2e1a", border: "1px solid #2d5a2d", color: "#e8f5e9" }} />
+                      <Bar dataKey="avgRating" fill="#66bb6a" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div style={{ background: "#1a2e1a", border: "1px solid #2d5a2d", borderRadius: "8px", padding: "1.5rem" }}>
+                  <h3 style={{ color: "#81c784", marginBottom: "1rem", fontSize: "1rem" }}>Rating Distribution</h3>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <PieChart>
+                      <Pie data={ratingDist} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80}>
+                        {ratingDist.map((_, i) => <Cell key={i} fill={PIE_COLORS[i]} />)}
+                      </Pie>
+                      <Tooltip contentStyle={{ background: "#1a2e1a", border: "1px solid #2d5a2d", color: "#e8f5e9" }} />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
-              <div className="bg-white rounded-xl border p-5 shadow-sm">
-                <h3 className="font-semibold mb-4 text-gray-700">Rating Distribution</h3>
-                <ResponsiveContainer width="100%" height={220}>
-                  <PieChart>
-                    <Pie data={stats.ratingDist} dataKey="count" nameKey="rating" cx="50%" cy="50%" outerRadius={80} label={({ rating }: any) => `${rating}★`}>
-                      {stats.ratingDist.map((_: any, i: number) => <Cell key={i} fill={PIE_COLORS[i]} />)}
-                    </Pie>
-                    <Legend />
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
+            )}
+
+            {feedbackStats.length === 0 && (
+              <div style={{ textAlign: "center", color: "#558b57", padding: "3rem", background: "#1a2e1a", borderRadius: "8px", border: "1px dashed #2d5a2d" }}>
+                No feedback data yet. Charts will appear once students submit feedback.
               </div>
-            </div>
+            )}
           </div>
         )}
 
-        {tab === 'meals' && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-xl border p-6 shadow-sm">
-              <h2 className="font-bold text-lg mb-4 text-gray-800">Add Meal Plan</h2>
-              <form onSubmit={createMeal} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <select value={mealForm.day} onChange={(e) => setMealForm({ ...mealForm, day: e.target.value })}
-                  className="border rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-500">
-                  {DAYS.map((d) => <option key={d}>{d}</option>)}
-                </select>
-                <input type="date" value={mealForm.weekStart} onChange={(e) => setMealForm({ ...mealForm, weekStart: e.target.value })} required
-                  className="border rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
-                <input placeholder="Breakfast" value={mealForm.breakfast} onChange={(e) => setMealForm({ ...mealForm, breakfast: e.target.value })} required
-                  className="border rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
-                <input placeholder="Lunch" value={mealForm.lunch} onChange={(e) => setMealForm({ ...mealForm, lunch: e.target.value })} required
-                  className="border rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
-                <input placeholder="Dinner" value={mealForm.dinner} onChange={(e) => setMealForm({ ...mealForm, dinner: e.target.value })} required
-                  className="border rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
-                <button type="submit" disabled={loading}
-                  className="bg-green-700 text-white rounded-lg px-6 py-3 font-semibold hover:bg-green-800 disabled:opacity-50 transition-colors">
-                  {loading ? 'Saving...' : 'Add Meal'}
-                </button>
-              </form>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {meals.map((meal) => (
-                <div key={meal.id} className="bg-white border rounded-xl p-5 shadow-sm">
-                  <div className="flex justify-between items-start mb-3">
-                    <h3 className="font-bold text-green-800">{meal.day}</h3>
-                    <button onClick={() => deleteMeal(meal.id)} className="text-red-400 hover:text-red-600 text-sm">🗑</button>
+        {/* ── MEALS TAB ── */}
+        {tab === "meals" && (
+          <div>
+            <h2 style={{ color: "#a5d6a7", marginBottom: "1.5rem" }}>Meal Plan Management</h2>
+
+            {/* Create form */}
+            <form onSubmit={handleCreateMeal} style={{
+              background: "#1a2e1a", border: "1px solid #2d5a2d",
+              borderRadius: "8px", padding: "1.5rem", marginBottom: "2rem",
+            }}>
+              <h3 style={{ color: "#81c784", marginBottom: "1rem" }}>Add New Meal Plan</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+                {(["day", "breakfast", "lunch", "dinner"] as const).map((field) => (
+                  <div key={field}>
+                    <label style={{ display: "block", color: "#81c784", marginBottom: "0.3rem", fontSize: "0.85rem", textTransform: "capitalize" }}>{field}</label>
+                    <input
+                      value={mealForm[field]}
+                      onChange={e => setMealForm(p => ({ ...p, [field]: e.target.value }))}
+                      required
+                      style={inputStyle}
+                      placeholder={field === "day" ? "e.g. Monday" : `Enter ${field}`}
+                    />
                   </div>
-                  <div className="space-y-1 text-sm text-gray-600">
-                    <p>🌅 {meal.breakfast}</p>
-                    <p>☀️ {meal.lunch}</p>
-                    <p>🌙 {meal.dinner}</p>
+                ))}
+                <div>
+                  <label style={{ display: "block", color: "#81c784", marginBottom: "0.3rem", fontSize: "0.85rem" }}>Week Start Date</label>
+                  <input
+                    type="date"
+                    value={mealForm.weekStart}
+                    onChange={e => setMealForm(p => ({ ...p, weekStart: e.target.value }))}
+                    required
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
+              <button type="submit" disabled={loading} style={btnStyle}>
+                {loading ? "Creating..." : "➕ Create Meal Plan"}
+              </button>
+            </form>
+
+            {/* Meal list */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              {meals.length === 0 && (
+                <div style={{ textAlign: "center", color: "#558b57", padding: "2rem", background: "#1a2e1a", borderRadius: "8px", border: "1px dashed #2d5a2d" }}>No meal plans yet.</div>
+              )}
+              {meals.map(meal => (
+                <div key={meal.id} style={{
+                  background: "#1a2e1a", border: "1px solid #2d5a2d",
+                  borderRadius: "8px", padding: "1rem 1.25rem",
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                }}>
+                  <div>
+                    <span style={{ color: "#a5d6a7", fontWeight: 600 }}>{meal.day}</span>
+                    <span style={{ color: "#558b57", fontSize: "0.8rem", marginLeft: "0.75rem" }}>
+                      Week of {new Date(meal.weekStart).toLocaleDateString()}
+                    </span>
+                    <div style={{ fontSize: "0.85rem", color: "#81c784", marginTop: "0.3rem" }}>
+                      🌅 {meal.breakfast} &nbsp;|&nbsp; ☀️ {meal.lunch} &nbsp;|&nbsp; 🌙 {meal.dinner}
+                    </div>
                   </div>
+                  <button onClick={() => handleDeleteMeal(meal.id)} style={{ background: "transparent", border: "1px solid #ef5350", color: "#ef5350", padding: "0.3rem 0.75rem", borderRadius: "4px", cursor: "pointer", fontSize: "0.8rem" }}>
+                    Delete
+                  </button>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {tab === 'announcements' && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-xl border p-6 shadow-sm max-w-lg">
-              <h2 className="font-bold text-lg mb-4">Post Announcement</h2>
-              <form onSubmit={createAnnouncement} className="space-y-4">
-                <input placeholder="Title" value={announcementForm.title} onChange={(e) => setAnnouncementForm({ ...announcementForm, title: e.target.value })} required
-                  className="w-full border rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
-                <textarea placeholder="Content" value={announcementForm.content} onChange={(e) => setAnnouncementForm({ ...announcementForm, content: e.target.value })} required rows={3}
-                  className="w-full border rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none" />
-                <button type="submit" disabled={loading}
-                  className="bg-green-700 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-800 disabled:opacity-50">
-                  {loading ? 'Posting...' : 'Post'}
-                </button>
-              </form>
+        {/* ── ANNOUNCEMENTS TAB ── */}
+        {tab === "announcements" && (
+          <div>
+            <h2 style={{ color: "#a5d6a7", marginBottom: "1.5rem" }}>Announcements</h2>
+
+            <form onSubmit={handleCreateAnnouncement} style={{
+              background: "#1a2e1a", border: "1px solid #2d5a2d",
+              borderRadius: "8px", padding: "1.5rem", marginBottom: "2rem",
+            }}>
+              <h3 style={{ color: "#81c784", marginBottom: "1rem" }}>Post Announcement</h3>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                <div>
+                  <label style={{ display: "block", color: "#81c784", marginBottom: "0.3rem", fontSize: "0.85rem" }}>Title</label>
+                  <input value={annForm.title} onChange={e => setAnnForm(p => ({ ...p, title: e.target.value }))} required style={inputStyle} placeholder="Announcement title" />
+                </div>
+                <div>
+                  <label style={{ display: "block", color: "#81c784", marginBottom: "0.3rem", fontSize: "0.85rem" }}>Content</label>
+                  <textarea value={annForm.content} onChange={e => setAnnForm(p => ({ ...p, content: e.target.value }))} required rows={3} style={{ ...inputStyle, resize: "vertical" }} placeholder="Write your announcement..." />
+                </div>
+              </div>
+              <button type="submit" disabled={loading} style={btnStyle}>
+                {loading ? "Posting..." : "📢 Post Announcement"}
+              </button>
+            </form>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              {announcements.map(ann => (
+                <div key={ann.id} style={{ background: "#1a2e1a", border: "1px solid #2d5a2d", borderRadius: "8px", padding: "1.25rem" }}>
+                  <div style={{ fontWeight: 600, color: "#a5d6a7" }}>{ann.title}</div>
+                  <div style={{ color: "#c8e6c9", marginTop: "0.4rem", fontSize: "0.9rem" }}>{ann.content}</div>
+                  <div style={{ color: "#558b57", fontSize: "0.75rem", marginTop: "0.5rem" }}>{new Date(ann.createdAt).toLocaleString()}</div>
+                </div>
+              ))}
+              {announcements.length === 0 && (
+                <div style={{ textAlign: "center", color: "#558b57", padding: "2rem", background: "#1a2e1a", borderRadius: "8px", border: "1px dashed #2d5a2d" }}>No announcements yet.</div>
+              )}
             </div>
-            <div className="space-y-3">
-              {announcements.map((a) => (
-                <div key={a.id} className="bg-white border rounded-xl p-4 flex justify-between items-start shadow-sm">
-                  <div>
-                    <p className="font-semibold text-gray-800">📢 {a.title}</p>
-                    <p className="text-gray-500 text-sm mt-1">{a.content}</p>
-                    <p className="text-gray-400 text-xs mt-1">{new Date(a.createdAt).toLocaleDateString()}</p>
+          </div>
+        )}
+
+        {/* ── SUGGESTIONS TAB ── */}
+        {tab === "suggestions" && (
+          <div>
+            <h2 style={{ color: "#a5d6a7", marginBottom: "1.5rem" }}>Student Suggestions</h2>
+            <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+              {suggestions.length === 0 && (
+                <div style={{ textAlign: "center", color: "#558b57", padding: "2rem", background: "#1a2e1a", borderRadius: "8px", border: "1px dashed #2d5a2d" }}>No suggestions yet.</div>
+              )}
+              {suggestions.map(s => (
+                <div key={s.id} style={{ background: "#1a2e1a", border: "1px solid #2d5a2d", borderRadius: "8px", padding: "1.25rem" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
+                    <div>
+                      <span style={{ color: "#a5d6a7", fontWeight: 600 }}>{s.user?.name}</span>
+                      <span style={{ color: "#558b57", fontSize: "0.8rem", marginLeft: "0.75rem" }}>{new Date(s.createdAt).toLocaleDateString()}</span>
+                    </div>
+                    <span style={{
+                      background: STATUS_COLORS[s.status] + "22",
+                      color: STATUS_COLORS[s.status],
+                      border: `1px solid ${STATUS_COLORS[s.status]}44`,
+                      padding: "0.2rem 0.6rem", borderRadius: "12px", fontSize: "0.75rem",
+                    }}>{s.status}</span>
                   </div>
-                  <button onClick={() => deleteAnnouncement(a.id)} className="text-red-400 hover:text-red-600">🗑</button>
+                  <p style={{ color: "#c8e6c9", marginBottom: "0.75rem", fontSize: "0.9rem" }}>{s.content}</p>
+
+                  {s.adminReply && (
+                    <div style={{ background: "#0f1a0f", border: "1px solid #2d5a2d", borderRadius: "4px", padding: "0.6rem 0.9rem", marginBottom: "0.75rem", fontSize: "0.85rem", color: "#81c784" }}>
+                      <strong>Admin reply:</strong> {s.adminReply}
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                    <input
+                      placeholder="Write reply (optional)..."
+                      value={replyMap[s.id] || ""}
+                      onChange={e => setReplyMap(p => ({ ...p, [s.id]: e.target.value }))}
+                      style={{ ...inputStyle, flex: 1, minWidth: "200px", padding: "0.4rem 0.75rem" }}
+                    />
+                    {(["REVIEWED", "IMPLEMENTED", "FLAGGED"] as const).map(st => (
+                      <button key={st} onClick={() => handleSuggestionUpdate(s.id, st)} style={{
+                        background: "transparent",
+                        border: `1px solid ${STATUS_COLORS[st]}`,
+                        color: STATUS_COLORS[st],
+                        padding: "0.4rem 0.75rem", borderRadius: "4px", cursor: "pointer", fontSize: "0.78rem",
+                      }}>→ {st}</button>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>
           </div>
         )}
-
-        {tab === 'suggestions' && (
-          <div className="space-y-4">
-            {suggestions.length === 0 && <p className="text-gray-400 text-center py-12">No suggestions yet.</p>}
-            {suggestions.map((s) => (
-              <div key={s.id} className="bg-white border rounded-xl p-5 shadow-sm">
-                <div className="flex justify-between items-start mb-3">
-                  <div>
-                    <p className="text-sm text-gray-500 font-medium">{s.user?.name}</p>
-                    <p className="text-gray-800 mt-1">{s.content}</p>
-                  </div>
-                  <span className={`text-xs px-2 py-1 rounded-full font-medium ${s.status === 'IMPLEMENTED' ? 'bg-green-100 text-green-700' : s.status === 'REVIEWED' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>{s.status}</span>
-                </div>
-                {s.adminReply && <p className="text-sm text-green-700 bg-green-50 rounded-lg px-3 py-2 mb-3">✅ Admin: {s.adminReply}</p>}
-                <div className="flex gap-2 flex-wrap">
-                  <input placeholder="Your reply..." value={replyForm[s.id]?.reply || ''} onChange={(e) => setReplyForm({ ...replyForm, [s.id]: { ...replyForm[s.id], reply: e.target.value } })}
-                    className="flex-1 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 min-w-0" />
-                  <select value={replyForm[s.id]?.status || 'REVIEWED'} onChange={(e) => setReplyForm({ ...replyForm, [s.id]: { ...replyForm[s.id], status: e.target.value } })}
-                    className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white">
-                    <option value="REVIEWED">Reviewed</option>
-                    <option value="IMPLEMENTED">Implemented</option>
-                  </select>
-                  <button onClick={() => replyToSuggestion(s.id)} className="bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-800">Reply</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      </main>
     </div>
   );
 }
+
+const inputStyle: React.CSSProperties = {
+  width: "100%", background: "#0f1a0f", border: "1px solid #2d5a2d",
+  color: "#e8f5e9", padding: "0.6rem 0.9rem", borderRadius: "4px",
+  fontSize: "0.9rem", fontFamily: "inherit", boxSizing: "border-box",
+  outline: "none",
+};
+
+const btnStyle: React.CSSProperties = {
+  marginTop: "1rem", background: "#2d5a2d", color: "#a5d6a7",
+  border: "1px solid #66bb6a", padding: "0.6rem 1.5rem",
+  borderRadius: "4px", cursor: "pointer", fontSize: "0.9rem",
+  fontFamily: "inherit",
+};
