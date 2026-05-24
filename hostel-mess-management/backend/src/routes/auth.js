@@ -32,7 +32,8 @@ router.post('/register', [
 
         res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
     } catch (err) {
-        res.status(500).json({ error: 'Server error' });
+        console.error('[Register Error]', err);
+        res.status(500).json({ error: err.message || 'Server error' });
     }
 });
 
@@ -58,8 +59,9 @@ router.post('/login', [
             { expiresIn: '7d' }
         );
         res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
-    } catch {
-        res.status(500).json({ error: 'Server error' });
+    } catch (err) {
+        console.error('[Login Error]', err);
+        res.status(500).json({ error: err.message || 'Server error' });
     }
 });
 

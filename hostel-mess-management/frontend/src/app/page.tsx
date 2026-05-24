@@ -19,7 +19,7 @@ export default function HomePage() {
     e.preventDefault();
     setLoading(true);
     try {
-      const endpoint = mode === 'login' ? '/auth/login' : '/auth/register';
+      const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
       const payload = mode === 'login'
         ? { email: form.email, password: form.password }
         : form;
