@@ -7,3 +7,4 @@ export class AppController {
         return 'Hostel Mess API is working!';
     }
 }
+
