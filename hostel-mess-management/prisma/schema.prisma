@@ -1,0 +1,138 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  STUDENT
+  ADMIN
+  STAFF
+}
+
+enum SuggestionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum PollStatus {
+  ACTIVE
+  CLOSED
+}
+
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  password          String
+  name              String
+  role              UserRole  @default(STUDENT)
+  studentId         String?   @unique
+  phone             String?
+  roomNumber        String?
+  profileImage      String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relationships
+  feedbacks         Feedback[]
+  suggestions       Suggestion[]
+  pollVotes         PollVote[]
+  createdMealPlans  MealPlan[] @relation("MealPlanCreator")
+  createdGroceryBills GroceryBill[] @relation("GroceryBillCreator")
+}
+
+model MealPlan {
+  id          String   @id @default(cuid())
+  date        DateTime
+  breakfast   String?
+  lunch       String?
+  dinner      String?
+  specialNote String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  createdBy   User     @relation("MealPlanCreator", fields: [createdById], references: [id])
+  createdById String
+  feedbacks   Feedback[]
+}
+
+model Feedback {
+  id          String   @id @default(cuid())
+  rating      Int      // 1-5 scale
+  comment     String?
+  mealType    String   // breakfast, lunch, or dinner
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String
+  mealPlan    MealPlan @relation(fields: [mealPlanId], references: [id])
+  mealPlanId  String
+}
+
+model Suggestion {
+  id          String           @id @default(cuid())
+  content     String
+  status      SuggestionStatus @default(PENDING)
+  adminNote   String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  // Relationships
+  user        User             @relation(fields: [userId], references: [id])
+  userId      String
+}
+
+model Poll {
+  id          String      @id @default(cuid())
+  title       String
+  description String?
+  options     Json        // Array of poll options
+  results     Json        // Vote counts for each option
+  status      PollStatus  @default(ACTIVE)
+  endDate     DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relationships
+  votes       PollVote[]
+}
+
+model PollVote {
+  id        String   @id @default(cuid())
+  optionIndex Int    // Index of the selected option
+  createdAt DateTime @default(now())
+
+  // Relationships
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  poll      Poll     @relation(fields: [pollId], references: [id])
+  pollId    String
+
+  @@unique([userId, pollId])
+}
+
+model GroceryBill {
+  id            String   @id @default(cuid())
+  title         String
+  amount        Float
+  description   String?
+  receiptUrl    String?  // URL to uploaded receipt image
+  billDate      DateTime
+  category      String?  // e.g., vegetables, grains, dairy, etc.
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relationships
+  createdBy     User     @relation("GroceryBillCreator", fields: [createdById], references: [id])
+  createdById   String
+}
