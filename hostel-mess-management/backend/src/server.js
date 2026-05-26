@@ -50,12 +50,12 @@ app.use(cors({
 app.use(express.json());
 
 // ── Static file serving ───────────────────────────────────────────────────────
-// FIX: finance.js writes uploads to <project_root>/uploads/
 // server.js is at <project_root>/backend/src/server.js
-// so the correct relative path from here is ../../../uploads (3 levels up then into uploads)
-// Adjust this if your folder structure differs.
-const uploadsPath = path.join(__dirname, '../../../uploads');
+// uploads folder is at <project_root>/uploads
+// __dirname = .../backend/src  →  ../../  = project root
+const uploadsPath = path.join(__dirname, '../../uploads');
 app.use('/uploads', express.static(uploadsPath));
+console.log(`📁 Serving uploads from: ${uploadsPath}`);
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
@@ -83,5 +83,4 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
     console.log(`✅ Server running on http://localhost:${PORT}`);
-    console.log(`📁 Serving uploads from: ${uploadsPath}`);
 });
